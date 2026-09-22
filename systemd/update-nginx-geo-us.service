@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh nginx US geoip prefix list
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/update-nginx-geo-us.sh

@@ -1,0 +1,42 @@
+# Open WebUI gateway only. No Ollama, no Whisper-large, no image gen.
+#
+# Host networking is required so the migrated Open WebUI audio setting
+# http://127.0.0.1:8787/v1 still reaches the systemd proxy. A bridge
+# network cannot see services bound to host loopback.
+#
+# HOST=127.0.0.1 makes uvicorn bind loopback (Open WebUI start.sh honors it).
+# nginx on the host is the only public listener.
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${WEBUI_IMAGE_TAG:-main-slim}
+    container_name: open-webui
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - /opt/open-webui/open-webui.env
+    environment:
+      HOST: "127.0.0.1"
+      PORT: "8080"
+      WEBUI_URL: "https://ai.hexxus.net"
+      CORS_ALLOW_ORIGIN: "https://ai.hexxus.net"
+      ENABLE_OLLAMA_API: "false"
+      USE_OLLAMA_DOCKER: "false"
+      ENABLE_OPENAI_API: "true"
+      OPENAI_API_BASE_URL: "https://api.x.ai/v1"
+      AUDIO_STT_ENGINE: "openai"
+      AUDIO_TTS_ENGINE: "openai"
+      AUDIO_STT_OPENAI_API_BASE_URL: "http://127.0.0.1:8787/v1"
+      AUDIO_TTS_OPENAI_API_BASE_URL: "http://127.0.0.1:8787/v1"
+      AUDIO_TTS_VOICE: "ara"
+    volumes:
+      - /opt/open-webui/data:/app/backend/data
+      # Talk-mode TTS: play clips off the shared #audioElement. Re-copy
+      # open-webui-patches/loader.js after an image pull if this mount is dropped.
+      - /home/btahedl/hexxus-ai-gateway/open-webui-patches/loader.js:/app/backend/open_webui/static/loader.js:ro
+      - /home/btahedl/hexxus-ai-gateway/open-webui-patches/loader.js:/app/build/static/loader.js:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

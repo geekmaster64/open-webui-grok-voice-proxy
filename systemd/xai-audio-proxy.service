@@ -1,0 +1,30 @@
+[Unit]
+Description=xAI OpenAI-compatible audio proxy (TTS/STT)
+Documentation=file:///home/btahedl/hexxus-ai-gateway/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xai-proxy
+Group=xai-proxy
+WorkingDirectory=/opt/xai-proxy
+EnvironmentFile=/opt/xai-proxy/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/xai-proxy/venv/bin/python /opt/xai-proxy/xai_audio_proxy.py
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/xai-proxy
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

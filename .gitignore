@@ -1,0 +1,15 @@
+.env
+*.env
+!*.env.example
+__pycache__/
+*.pyc
+.venv/
+venv/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+.DS_Store
+ansible/*.retry

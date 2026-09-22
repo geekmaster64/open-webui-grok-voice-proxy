@@ -1,0 +1,16 @@
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+backend  = systemd
+
+[sshd]
+enabled = true
+
+[nginx-limit-req]
+enabled  = true
+logpath  = /var/log/nginx/error.log
+backend  = auto
+maxretry = 10
+findtime = 10m
+bantime  = 1h

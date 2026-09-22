@@ -1,0 +1,233 @@
+---
+# OS config for the Open WebUI gateway. VM hardware is Terraform.
+# One playbook, this host in inventory. Does not wrap docker run in Terraform.
+- name: Configure hexxus-ai-01 as the xAI Open WebUI gateway
+  hosts: gateway
+  become: true
+  vars:
+    repo_root: "{{ playbook_dir }}/.."
+    webui_dir: /opt/open-webui
+    proxy_dir: /opt/xai-proxy
+    webui_image_tag: main-slim
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+    - name: restart xai-audio-proxy
+      ansible.builtin.service:
+        name: xai-audio-proxy
+        state: restarted
+    - name: reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+    - name: compose up open-webui
+      ansible.builtin.command:
+        cmd: docker compose -f {{ webui_dir }}/docker-compose.yml --env-file {{ webui_dir }}/open-webui.env up -d
+      changed_when: true
+
+  tasks:
+    - name: Install gateway packages
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+        name:
+          - docker.io
+          - docker-compose-v2
+          - nginx
+          - certbot
+          - python3-certbot-nginx
+          - python3-venv
+          - python3-pip
+          - ufw
+          - fail2ban
+          - rsync
+          - curl
+          - ca-certificates
+          - openssl
+        state: present
+
+    - name: Enable docker and nginx
+      ansible.builtin.service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - docker
+        - nginx
+
+    - name: Add login user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Create xai-proxy system user
+      ansible.builtin.user:
+        name: xai-proxy
+        system: true
+        home: "{{ proxy_dir }}"
+        shell: /usr/sbin/nologin
+        create_home: false
+
+    - name: Create application directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ webui_dir }}"
+        - "{{ webui_dir }}/data"
+        - /var/www/letsencrypt
+
+    - name: Create proxy directory
+      ansible.builtin.file:
+        path: "{{ proxy_dir }}"
+        state: directory
+        owner: xai-proxy
+        group: xai-proxy
+        mode: "0755"
+
+    - name: Install Open WebUI env if missing
+      ansible.builtin.copy:
+        dest: "{{ webui_dir }}/open-webui.env"
+        mode: "0600"
+        force: false
+        content: |
+          WEBUI_IMAGE_TAG={{ webui_image_tag }}
+          WEBUI_SECRET_KEY={{ lookup('password', '/dev/null chars=hexdigits length=64') }}
+          XAI_API_KEY=xai-replace-me
+          OPENAI_API_KEY=xai-replace-me
+          AUDIO_TTS_OPENAI_API_KEY=xai-replace-me
+          AUDIO_STT_OPENAI_API_KEY=xai-replace-me
+      no_log: true
+
+    - name: Install compose file
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/compose/docker-compose.yml"
+        dest: "{{ webui_dir }}/docker-compose.yml"
+        mode: "0644"
+      notify: compose up open-webui
+
+    - name: Link compose env file
+      ansible.builtin.file:
+        src: "{{ webui_dir }}/open-webui.env"
+        dest: "{{ webui_dir }}/.env"
+        state: link
+
+    - name: Install proxy sources
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/proxy/{{ item }}"
+        dest: "{{ proxy_dir }}/{{ item }}"
+        owner: xai-proxy
+        group: xai-proxy
+        mode: "0644"
+      loop:
+        - xai_audio_proxy.py
+        - mapping.py
+        - requirements.txt
+      notify: restart xai-audio-proxy
+
+    - name: Install proxy env if missing
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/proxy/.env.example"
+        dest: "{{ proxy_dir }}/.env"
+        owner: xai-proxy
+        group: xai-proxy
+        mode: "0600"
+        force: false
+
+    - name: Create proxy venv
+      ansible.builtin.command:
+        cmd: python3 -m venv {{ proxy_dir }}/venv
+        creates: "{{ proxy_dir }}/venv/bin/python"
+
+    - name: Install proxy Python deps
+      ansible.builtin.command:
+        cmd: "{{ proxy_dir }}/venv/bin/pip install -r {{ proxy_dir }}/requirements.txt"
+      register: pip_install
+      changed_when: "'Successfully installed' in pip_install.stdout"
+      notify: restart xai-audio-proxy
+
+    - name: Own proxy tree
+      ansible.builtin.file:
+        path: "{{ proxy_dir }}"
+        owner: xai-proxy
+        group: xai-proxy
+        recurse: true
+
+    - name: Install systemd unit
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/systemd/xai-audio-proxy.service"
+        dest: /etc/systemd/system/xai-audio-proxy.service
+        mode: "0644"
+      notify:
+        - reload systemd
+        - restart xai-audio-proxy
+
+    - name: Enable audio proxy
+      ansible.builtin.service:
+        name: xai-audio-proxy
+        enabled: true
+        state: started
+
+    - name: Install nginx http snippets
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/nginx/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: websocket-map.conf, dest: /etc/nginx/conf.d/00-websocket-map.conf }
+        - { src: limit-req.conf, dest: /etc/nginx/conf.d/10-limit-req.conf }
+        - { src: geo-us.conf, dest: /etc/nginx/conf.d/20-geo-us.conf }
+        - { src: proxy-params.conf, dest: /etc/nginx/snippets/open-webui-proxy.conf }
+      notify: reload nginx
+
+    - name: Install nginx site (HTTP until certs exist)
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/nginx/open-webui.http-only.conf"
+        dest: /etc/nginx/sites-available/open-webui
+        mode: "0644"
+      notify: reload nginx
+
+    - name: Enable nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/open-webui
+        dest: /etc/nginx/sites-enabled/open-webui
+        state: link
+      notify: reload nginx
+
+    - name: Disable default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: reload nginx
+
+    - name: Configure UFW
+      ansible.builtin.shell: |
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow OpenSSH
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw --force enable
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Compose up Open WebUI
+      ansible.builtin.command:
+        cmd: docker compose -f {{ webui_dir }}/docker-compose.yml --env-file {{ webui_dir }}/open-webui.env up -d
+      register: compose_up
+      changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout or 'Pulled' in compose_up.stdout"
+
+    - name: Wait for proxy health
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8787/health
+        return_content: true
+      register: proxy_health
+      retries: 15
+      delay: 2
+      until: proxy_health.status == 200

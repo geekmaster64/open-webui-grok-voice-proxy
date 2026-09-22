@@ -1,0 +1,15 @@
+vsphere_server   = "vcenter.hexxus.net"
+vsphere_user     = "administrator@vsphere.local"
+vsphere_password = "replace-me"
+datacenter       = "Datacenter"
+cluster          = "R740XD"
+datastore        = "datastore1"
+network          = "VM Network"
+template         = "ubuntu-24.04-template"
+ssh_public_key   = "ssh-ed25519 AAAA... btahedl"
+
+# vm_name       = "hexxus-ai-01"
+# ipv4_address  = "10.20.10.150"
+# num_cpus      = 2
+# memory_mb     = 8192
+# disk_gb       = 80
