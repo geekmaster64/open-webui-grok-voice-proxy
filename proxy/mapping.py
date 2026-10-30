@@ -7,6 +7,10 @@ from typing import Any
 
 DEFAULT_VOICE = "ara"
 DEFAULT_LANGUAGE = "en"
+DEFAULT_STT_MODEL = "grok-voice-transcribe-2.0"
+DEFAULT_STT_KEYTERMS = ("Grok", "Ara", "Open WebUI", "Hexxus")
+MAX_STT_KEYTERMS = 100
+MAX_STT_KEYTERM_CHARS = 50
 
 # xAI defaults to 24 kHz MP3 (MPEG-2 Layer III). Safari/CarPlay talk mode
 # cannot play that: each clip shows as ~0.5s of silence, then the UI waits
@@ -113,6 +117,7 @@ def openai_speech_to_xai_tts(
     optimize_streaming_latency: int = 1,
     sample_rate: int | None = None,
     bit_rate: int | None = None,
+    text_normalization: bool = True,
 ) -> tuple[dict[str, Any], str]:
     text = body.get("input") or body.get("text") or ""
     if not isinstance(text, str):
@@ -125,11 +130,66 @@ def openai_speech_to_xai_tts(
         "language": language,
         "output_format": output_format_for(codec, sample_rate=sample_rate, bit_rate=bit_rate),
         "optimize_streaming_latency": optimize_streaming_latency,
+        "text_normalization": bool(text_normalization),
     }
     speed = clamp_speed(body.get("speed"))
     if speed is not None:
         payload["speed"] = speed
     return payload, codec
+
+
+def parse_keyterms(value: str | None, defaults: tuple[str, ...] = DEFAULT_STT_KEYTERMS) -> list[str]:
+    """Split a comma/newline env list. Empty string means no keyterms."""
+    if value is None:
+        return normalize_keyterms(defaults)
+    return normalize_keyterms(re.split(r"[,;\n]+", value))
+
+
+def extra_keyterms_from_prompt(prompt: str | None) -> list[str]:
+    """Map OpenAI Whisper `prompt` onto xAI `keyterm` fields."""
+    if not prompt:
+        return []
+    return normalize_keyterms(re.split(r"[,;\n]+", prompt))
+
+
+def normalize_keyterms(values: Any) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    if values is None:
+        return out
+    if isinstance(values, str):
+        values = [values]
+    for raw in values:
+        term = str(raw).strip()
+        if not term:
+            continue
+        term = term[:MAX_STT_KEYTERM_CHARS]
+        key = term.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+        if len(out) >= MAX_STT_KEYTERMS:
+            break
+    return out
+
+
+def stt_form_fields(
+    *,
+    language: str | None = None,
+    model: str = DEFAULT_STT_MODEL,
+    keyterms: list[str] | None = None,
+    filler_words: bool = False,
+) -> list[tuple[str, str]]:
+    """Option fields for POST /v1/stt. Caller appends `file` last."""
+    fields: list[tuple[str, str]] = [("model", (model or DEFAULT_STT_MODEL).strip() or DEFAULT_STT_MODEL)]
+    if language:
+        fields.append(("language", language))
+        fields.append(("format", "true"))
+    fields.append(("filler_words", "true" if filler_words else "false"))
+    for term in normalize_keyterms(keyterms):
+        fields.append(("keyterm", term))
+    return fields
 
 
 def multipart_body(

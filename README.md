@@ -46,6 +46,20 @@ In Open WebUI **Admin → Settings → Audio**:
 
 Point the Open WebUI container at host loopback (this repo uses `network_mode: host` + `HOST=127.0.0.1`) so `http://127.0.0.1:8787/v1` works from inside Docker.
 
+## xAI options this proxy sets
+
+| Setting | Default | Why |
+| --- | --- | --- |
+| TTS `output_format` | MP3 44.1 kHz / 128 kbps | Safari / CarPlay Talk mode. xAI’s 24 kHz default is MPEG-2. |
+| TTS `text_normalization` | `true` | Speak numbers, dates, and abbreviations in spoken form. |
+| TTS `optimize_streaming_latency` | `1` | Lower time-to-first-audio for Talk mode. |
+| STT `model` | `grok-voice-transcribe-2.0` | Pin the current transcription model. |
+| STT `keyterm` | `Grok`, `Ara`, `Open WebUI`, `Hexxus` | Bias short Talk-mode clips toward those names. Open WebUI’s Whisper `prompt` is appended. |
+| STT `format` | `true` when `language` is set | Inverse text normalization. xAI requires `language` for this. |
+| STT `filler_words` | `false` | Drop uh/um from the transcript. |
+
+Override with `TTS_TEXT_NORMALIZATION`, `STT_MODEL`, and `STT_KEYTERMS` in `/opt/xai-proxy/.env`.
+
 ## Voice map
 
 OpenAI voice names are mapped to Grok voices: alloy/ash/sage → **ara**, nova/shimmer/coral → **eve**, echo/verse → **leo**, onyx → **rex**, fable → **sal**. Names like `ara` pass through.

@@ -29,7 +29,15 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from mapping import CODEC_CONTENT_TYPE, multipart_body, openai_speech_to_xai_tts
+from mapping import (
+    CODEC_CONTENT_TYPE,
+    DEFAULT_STT_MODEL,
+    extra_keyterms_from_prompt,
+    multipart_body,
+    openai_speech_to_xai_tts,
+    parse_keyterms,
+    stt_form_fields,
+)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -44,6 +52,14 @@ DEFAULT_LANGUAGE = os.environ.get("TTS_DEFAULT_LANGUAGE", "en")
 OPTIMIZE_STREAMING_LATENCY = int(os.environ.get("TTS_OPTIMIZE_STREAMING_LATENCY", "1"))
 TTS_SAMPLE_RATE = int(os.environ.get("TTS_SAMPLE_RATE", "44100"))
 TTS_BIT_RATE = int(os.environ.get("TTS_BIT_RATE", "128000"))
+TTS_TEXT_NORMALIZATION = os.environ.get("TTS_TEXT_NORMALIZATION", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+STT_MODEL = os.environ.get("STT_MODEL", DEFAULT_STT_MODEL).strip() or DEFAULT_STT_MODEL
+STT_KEYTERMS = parse_keyterms(os.environ.get("STT_KEYTERMS"))
 
 http_client: httpx.AsyncClient | None = None
 
@@ -91,6 +107,9 @@ async def health(_request: Request) -> JSONResponse:
             "upstream": XAI_BASE_URL,
             "default_voice": DEFAULT_VOICE,
             "has_api_key": bool(XAI_API_KEY),
+            "text_normalization": TTS_TEXT_NORMALIZATION,
+            "stt_model": STT_MODEL,
+            "stt_keyterms": STT_KEYTERMS,
         }
     )
 
@@ -139,6 +158,7 @@ async def speech(request: Request) -> Response:
         optimize_streaming_latency=OPTIMIZE_STREAMING_LATENCY,
         sample_rate=TTS_SAMPLE_RATE,
         bit_rate=TTS_BIT_RATE,
+        text_normalization=TTS_TEXT_NORMALIZATION,
     )
     assert http_client is not None
     url = f"{XAI_BASE_URL}/v1/tts"
@@ -215,13 +235,15 @@ async def transcriptions(request: Request) -> Response:
 
     response_format = (_form_str(form.get("response_format")) or "json").lower()
     language = _form_str(form.get("language"))
+    prompt = _form_str(form.get("prompt"))
 
     # xAI wants option fields before file.
-    fields: list[tuple[str, str]] = []
-    if language:
-        fields.append(("language", language))
-        fields.append(("format", "true"))
-    fields.append(("filler_words", "false"))
+    fields = stt_form_fields(
+        language=language,
+        model=STT_MODEL,
+        keyterms=STT_KEYTERMS + extra_keyterms_from_prompt(prompt),
+        filler_words=False,
+    )
 
     assert http_client is not None
     url = f"{XAI_BASE_URL}/v1/stt"
